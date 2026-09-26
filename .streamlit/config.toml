@@ -1,0 +1,13 @@
+# Tema fixo no modo claro: a paleta dos gráficos foi validada contra esta
+# superfície (#fcfcfb). Um modo escuro exigiria uma nova validação dos passos
+# de cor, e não uma simples inversão.
+[theme]
+base = "light"
+backgroundColor = "#fcfcfb"
+secondaryBackgroundColor = "#f3f2ed"
+textColor = "#0b0b0b"
+primaryColor = "#2a78d6"
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
