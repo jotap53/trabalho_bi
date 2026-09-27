@@ -11,3 +11,8 @@ font = "sans serif"
 
 [browser]
 gatherUsageStats = false
+
+# Os mapas enviam dezenas de milhares de pontos em JSON a cada interação;
+# comprimir o websocket reduz bastante o tráfego quando o app roda na VPS.
+[server]
+enableWebsocketCompression = true

@@ -50,21 +50,16 @@ modo = st.radio(
     key="esp_modo",
 )
 
-pontos = imoveis[["LATITUDE", "LONGITUDE", "BAIRRO", "TIPO_USO_IMOVEL", "FAIXA_IDADE_IMOVEL"]].dropna(
-    subset=["LATITUDE", "LONGITUDE"]
-)
-vista = pdk.ViewState(
-    latitude=float(pontos["LATITUDE"].median()),
-    longitude=float(pontos["LONGITUDE"].median()),
-    zoom=11.1,
-    pitch=0,
-)
+com_coordenada = imoveis.dropna(subset=["LATITUDE", "LONGITUDE"])
 
 if modo == "Pontos individuais":
+    pontos = ui.pontos_mapa(
+        com_coordenada, {"BAIRRO": "b", "TIPO_USO_IMOVEL": "u", "FAIXA_IDADE_IMOVEL": "i"}
+    )
     camada = pdk.Layer(
         "ScatterplotLayer",
         data=pontos,
-        get_position="[LONGITUDE, LATITUDE]",
+        get_position="[x, y]",
         get_fill_color=ui.rgb(ui.SERIE_1, 150),
         get_radius=28,
         radius_min_pixels=1,
@@ -72,7 +67,7 @@ if modo == "Pontos individuais":
         pickable=True,
     )
     dica = {
-        "html": "<b>{BAIRRO}</b><br/>{TIPO_USO_IMOVEL} · {FAIXA_IDADE_IMOVEL}",
+        "html": "<b>{b}</b><br/>{u} · {i}",
         "style": {"backgroundColor": "white", "color": ui.TINTA_1, "fontSize": "12px"},
     }
     legenda = (
@@ -80,10 +75,13 @@ if modo == "Pontos individuais":
         "mostra onde o mercado se concentra."
     )
 else:
+    # O hexágono só agrega posições: os atributos do tooltip de pontos não
+    # precisam viajar até o navegador neste modo.
+    pontos = ui.pontos_mapa(com_coordenada)
     camada = pdk.Layer(
         "HexagonLayer",
         data=pontos,
-        get_position="[LONGITUDE, LATITUDE]",
+        get_position="[x, y]",
         radius=320,
         elevation_scale=0,
         extruded=False,
@@ -100,16 +98,7 @@ else:
         "Resolve a sobreposição que o mapa de pontos produz nas áreas mais densas."
     )
 
-st.pydeck_chart(
-    pdk.Deck(
-        layers=[camada],
-        initial_view_state=vista,
-        map_style=pdk.map_styles.CARTO_LIGHT,
-        map_provider="carto",
-        tooltip=dica,
-    ),
-    height=520,
-)
+ui.mapa([camada], pontos, dica)
 st.caption(legenda)
 
 st.divider()

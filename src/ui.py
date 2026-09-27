@@ -17,12 +17,15 @@ Regras seguidas em todos os gráficos:
 from __future__ import annotations
 
 import base64
+import json
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
+import pydeck as pdk
 import streamlit as st
+from pydeck.bindings.json_tools import default_serialize
 
 # --- Superfícies e tintas -------------------------------------------------
 SUPERFICIE = "#fcfcfb"
@@ -306,3 +309,53 @@ def rgb(hexadecimal: str, alpha: int | None = None) -> list[int]:
     texto = hexadecimal.lstrip("#")
     canais = [int(texto[i : i + 2], 16) for i in (0, 2, 4)]
     return canais + [alpha] if alpha is not None else canais
+
+
+class _DeckCompacto(pdk.Deck):
+    """Deck serializado sem a indentação que o pydeck aplica por padrão.
+
+    Com dezenas de milhares de pontos, a indentação sozinha é boa parte dos
+    megabytes enviados ao navegador a cada interação.
+    """
+
+    def to_json(self) -> str:
+        return json.dumps(self, sort_keys=True, default=default_serialize, separators=(",", ":"))
+
+
+def pontos_mapa(df: pd.DataFrame, colunas: dict[str, str] | None = None) -> pd.DataFrame:
+    """Reduz a base ao mínimo que o mapa precisa, com nomes de coluna curtos.
+
+    Cada linha vira um objeto JSON no navegador, então o nome da coluna se
+    repete em todos os pontos: `x`/`y` em vez de LONGITUDE/LATITUDE. As
+    coordenadas ficam com 5 casas decimais (cerca de 1 m no terreno), bem
+    abaixo da precisão da conversão de UTM feita no tratamento.
+    """
+    colunas = colunas or {}
+    reduzido = pd.DataFrame(
+        {
+            "x": df["LONGITUDE"].round(5).to_numpy(),
+            "y": df["LATITUDE"].round(5).to_numpy(),
+        }
+    )
+    for origem, destino in colunas.items():
+        reduzido[destino] = df[origem].to_numpy()
+    return reduzido
+
+
+def mapa(camadas: list[pdk.Layer], centro: pd.DataFrame, dica: dict | None, altura: int = 520) -> None:
+    """Desenha o mapa base claro com as camadas, centrado na mediana dos pontos."""
+    st.pydeck_chart(
+        _DeckCompacto(
+            layers=camadas,
+            initial_view_state=pdk.ViewState(
+                latitude=float(centro["y"].median()),
+                longitude=float(centro["x"].median()),
+                zoom=11.1,
+                pitch=0,
+            ),
+            map_style=pdk.map_styles.CARTO_LIGHT,
+            map_provider="carto",
+            tooltip=dica,
+        ),
+        height=altura,
+    )

@@ -91,40 +91,32 @@ else:
     # cima — sem alterar os passos de cor validados da rampa.
     opacidade = dict(zip(faixas, (70, 205, 240)))
     raio = dict(zip(faixas, (24, 44, 70)))
-    ordem_desenho = {faixa: indice for indice, faixa in enumerate(faixas)}
 
-    mapa["cor"] = mapa["faixa"].map(lambda f: ui.rgb(cores[f], opacidade[f]))
-    mapa["raio"] = mapa["faixa"].map(raio)
     mapa["valor_formatado"] = mapa[variavel].map(ui.brl)
-    mapa = mapa.sort_values("faixa", key=lambda s: s.map(ordem_desenho))
+    pontos = ui.pontos_mapa(mapa, {"BAIRRO": "b", "valor_formatado": "v", "faixa": "f"})
 
-    st.pydeck_chart(
-        pdk.Deck(
-            layers=[
-                pdk.Layer(
-                    "ScatterplotLayer",
-                    data=mapa,
-                    get_position="[LONGITUDE, LATITUDE]",
-                    get_fill_color="cor",
-                    get_radius="raio",
-                    radius_min_pixels=1,
-                    radius_max_pixels=11,
-                    pickable=True,
-                )
-            ],
-            initial_view_state=pdk.ViewState(
-                latitude=float(mapa["LATITUDE"].median()),
-                longitude=float(mapa["LONGITUDE"].median()),
-                zoom=11.1,
-            ),
-            map_style=pdk.map_styles.CARTO_LIGHT,
-            map_provider="carto",
-            tooltip={
-                "html": "<b>{BAIRRO}</b><br/>{valor_formatado}<br/>{faixa}",
-                "style": {"backgroundColor": "white", "color": ui.TINTA_1, "fontSize": "12px"},
-            },
-        ),
-        height=520,
+    # Uma camada por faixa: cor e raio viram constantes da camada em vez de
+    # se repetirem em cada ponto, e a ordem das camadas é a ordem de desenho.
+    camadas = [
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=pontos[pontos["f"] == faixa],
+            get_position="[x, y]",
+            get_fill_color=ui.rgb(cores[faixa], opacidade[faixa]),
+            get_radius=raio[faixa],
+            radius_min_pixels=1,
+            radius_max_pixels=11,
+            pickable=True,
+        )
+        for faixa in faixas
+    ]
+    ui.mapa(
+        camadas,
+        pontos,
+        {
+            "html": "<b>{b}</b><br/>{v}<br/>{f}",
+            "style": {"backgroundColor": "white", "color": ui.TINTA_1, "fontSize": "12px"},
+        },
     )
 
     quadrados = "".join(
