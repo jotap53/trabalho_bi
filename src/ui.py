@@ -20,6 +20,7 @@ import base64
 import io
 import json
 import math
+import re
 from pathlib import Path
 
 import numpy as np
@@ -137,6 +138,25 @@ def pct(valor, casas: int = 1) -> str:
 
 
 # --- Estrutura da página --------------------------------------------------
+# "Mobi" cobre os navegadores de celular Android e iOS; tablets Android e
+# iPads recentes não o incluem e ficam com o layout de desktop, que lhes serve.
+_AGENTE_CELULAR = re.compile(r"Mobi|iPhone|iPod", re.IGNORECASE)
+
+
+def e_celular() -> bool:
+    """Indica se a página foi aberta em um celular, pelo User-Agent.
+
+    O CSS resolve a disposição dos elementos do Streamlit, mas não alcança o
+    layout interno dos gráficos Plotly nem a altura do mapa, que são definidos
+    no servidor: para esses, o dashboard precisa saber que a tela é estreita.
+    """
+    try:
+        agente = st.context.headers.get("User-Agent", "")
+    except Exception:
+        return False
+    return bool(_AGENTE_CELULAR.search(agente or ""))
+
+
 def configurar_pagina(titulo: str, icone=None) -> None:
     """Configura a página e usa o escudo da Prefeitura como ícone da aba.
 
@@ -157,6 +177,38 @@ def configurar_pagina(titulo: str, icone=None) -> None:
           h1, h2, h3 {{ color: {TINTA_1}; }}
           .rodape {{ color: {TINTA_3}; font-size: 0.78rem; line-height: 1.55;
                      border-top: 1px solid {GRADE}; padding-top: 0.8rem; margin-top: 2rem; }}
+
+          /* Telas estreitas: o Streamlit empilha todas as colunas, o que deixa
+             um cartão por linha e a logo acima do título. */
+          @media (max-width: 640px) {{
+            .st-key-cartoes [data-testid="stHorizontalBlock"] {{
+              flex-wrap: wrap; gap: 0.6rem;
+            }}
+            .st-key-cartoes [data-testid="stColumn"] {{
+              flex: 1 1 calc(50% - 0.6rem) !important;
+              min-width: calc(50% - 0.6rem) !important;
+            }}
+            .st-key-cartoes [data-testid="stMetric"] {{ padding: 0.7rem 0.8rem; }}
+            .st-key-cartoes [data-testid="stMetricValue"] {{ font-size: 1.25rem; }}
+            .st-key-cartoes [data-testid="stMetricLabel"] p {{
+              font-size: 0.8rem; white-space: normal; overflow: visible;
+            }}
+            .st-key-cartoes [data-testid="stMetricLabel"] > div {{ overflow: visible; }}
+
+            .st-key-cabecalho [data-testid="stHorizontalBlock"] {{
+              flex-wrap: nowrap; gap: 0.8rem;
+            }}
+            .st-key-cabecalho [data-testid="stColumn"]:first-child {{
+              flex: 0 0 64px !important; min-width: 64px !important;
+            }}
+            .st-key-cabecalho [data-testid="stColumn"]:last-child {{
+              flex: 1 1 0 !important; min-width: 0 !important; width: auto !important;
+            }}
+            .st-key-cabecalho [data-testid="stColumn"]:first-child img {{
+              width: 64px !important;
+            }}
+            .st-key-cabecalho h3 {{ font-size: 1.35rem; padding: 0; }}
+          }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -205,14 +257,17 @@ def cabecalho(titulo: str, subtitulo: str, logo, base: str) -> None:
     """Cabeçalho com a logo oficial da Prefeitura e a base usada na página."""
     # A proporcao precisa deixar a primeira coluna com mais de 128 px: o CSS do
     # Streamlit limita a imagem a 100% da coluna, e com [1, 8] ela encolhia.
-    esquerda, direita = st.columns([1, 6], vertical_alignment="center")
-    with esquerda:
-        st.markdown(
-            imagem_nitida(logo, 128, "Prefeitura de Fortaleza"), unsafe_allow_html=True
-        )
-    with direita:
-        st.markdown(f"### {titulo}")
-        st.caption(f"{subtitulo}  ·  **Base:** {base}")
+    # A chave do contêiner vira a classe `st-key-cabecalho`, usada pelo CSS de
+    # telas estreitas para manter a logo ao lado do título.
+    with st.container(key="cabecalho"):
+        esquerda, direita = st.columns([1, 6], vertical_alignment="center")
+        with esquerda:
+            st.markdown(
+                imagem_nitida(logo, 128, "Prefeitura de Fortaleza"), unsafe_allow_html=True
+            )
+        with direita:
+            st.markdown(f"### {titulo}")
+            st.caption(f"{subtitulo}  ·  **Base:** {base}")
 
 
 def rodape(nota: str = "") -> None:
@@ -228,9 +283,12 @@ def rodape(nota: str = "") -> None:
 
 def cartoes(itens) -> None:
     """Fileira de cartões de indicador — quando o número é o próprio gráfico."""
-    for coluna, item in zip(st.columns(len(itens)), itens):
-        rotulo, valor, ajuda = item
-        coluna.metric(rotulo, valor, help=ajuda, border=True)
+    # A chave vira a classe `st-key-cartoes`: em telas estreitas o CSS põe
+    # dois cartões por linha em vez de empilhá-los um a um.
+    with st.container(key="cartoes"):
+        for coluna, item in zip(st.columns(len(itens)), itens):
+            rotulo, valor, ajuda = item
+            coluna.metric(rotulo, valor, help=ajuda, border=True)
 
 
 def grafico(fig: go.Figure, altura: int = 380, chave: str | None = None) -> None:
@@ -239,13 +297,57 @@ def grafico(fig: go.Figure, altura: int = 380, chave: str | None = None) -> None
     `theme=None` é obrigatório: o tema automático do Streamlit sobrescreveria
     a paleta validada por uma paleta própria.
     """
+    config = {"displaylogo": False}
+    if e_celular():
+        # Gráficos que precisam de mais altura na tela estreita (barras com
+        # rótulos em várias linhas) já trazem a altura mínima na figura.
+        altura = max(altura, fig.layout.height or 0)
+        _compactar(fig)
+        # No toque, a barra de ferramentas fica sempre visível sobre o título.
+        config["displayModeBar"] = False
     fig.update_layout(
         template=_TEMPLATE,
         paper_bgcolor=SUPERFICIE,
         plot_bgcolor=SUPERFICIE,
         height=altura,
     )
-    st.plotly_chart(fig, theme=None, key=chave, config={"displaylogo": False})
+    st.plotly_chart(fig, theme=None, key=chave, config=config)
+
+
+def _quebrar(texto: str, limite: int) -> list[str]:
+    """Quebra o texto em linhas de até `limite` caracteres, entre palavras."""
+    linhas: list[str] = []
+    for palavra in texto.split():
+        if linhas and len(linhas[-1]) + 1 + len(palavra) <= limite:
+            linhas[-1] += " " + palavra
+        else:
+            linhas.append(palavra)
+    return linhas
+
+
+def _compactar(fig: go.Figure) -> None:
+    """Ajustes de layout para a largura de um celular.
+
+    O Plotly não quebra o título, que é cortado na borda da tela, e a legenda
+    horizontal no topo passa a ocupar duas linhas e cobre o título. O título
+    é quebrado entre palavras e a legenda desce para baixo do gráfico.
+    """
+    titulo = fig.layout.title.text
+    linhas = _quebrar(titulo, 40) if titulo else []
+    margem = fig.layout.margin
+    topo = (margem.t if margem.t is not None else 64) + 20 * max(len(linhas) - 1, 0)
+    fig.update_layout(
+        title=dict(text="<br>".join(linhas), font=dict(size=15)) if linhas else {},
+        margin=dict(t=topo),
+    )
+    series = [t for t in fig.data if t.name and t.showlegend is not False]
+    if len(series) >= 2:
+        # Ancorada na base da figura, e não do gráfico, a legenda fica abaixo
+        # do título do eixo x em vez de disputar espaço com ele.
+        fig.update_layout(
+            legend=dict(orientation="h", yref="container", y=0, yanchor="bottom", xanchor="left", x=0),
+            margin=dict(b=(margem.b if margem.b is not None else 8) + 44),
+        )
 
 
 def histograma(
@@ -321,10 +423,11 @@ def barras_horizontais(dados, categoria, valor, titulo, formato=None, cor_padrao
     """
     formato = formato or (lambda v: num(v))
     ordenado = dados.sort_values(valor)
+    nomes = ordenado[categoria].astype(str)
     fig = go.Figure(
         go.Bar(
             x=ordenado[valor],
-            y=ordenado[categoria].astype(str),
+            y=nomes,
             orientation="h",
             marker=dict(color=_cores(ordenado[categoria], cor_padrao), cornerradius=4),
             text=[formato(v) for v in ordenado[valor]],
@@ -340,6 +443,19 @@ def barras_horizontais(dados, categoria, valor, titulo, formato=None, cor_padrao
         yaxis=dict(showgrid=False, tickfont=dict(color=TINTA_2, size=12)),
         margin=dict(l=8, r=84, t=64, b=8),
     )
+    if e_celular():
+        # Nomes longos de zona e bairro espremeriam as barras na tela estreita.
+        # Abreviar confundiria zonas que só diferem no fim ("Moderada 1" e
+        # "Moderada 2"), então o nome é quebrado em linhas e a figura cresce.
+        rotulos = [_quebrar(n, 18) for n in nomes]
+        linhas = max(len(r) for r in rotulos) if rotulos else 1
+        fig.update_yaxes(
+            tickmode="array",
+            tickvals=list(nomes),
+            ticktext=["<br>".join(r) for r in rotulos],
+            tickfont=dict(size=11),
+        )
+        fig.update_layout(height=len(nomes) * (13 * linhas + 10) + 110)
     return fig
 
 
@@ -434,5 +550,11 @@ class _DeckPronto(pdk.Deck):
 
 
 def mapa(json_pronto: str, dica: dict | None, altura: int = 520) -> None:
-    """Desenha um mapa gerado por `json_mapa`."""
+    """Desenha um mapa gerado por `json_mapa`.
+
+    No celular o mapa fica mais baixo: arrastar o dedo sobre ele move o mapa
+    e não a página, então ele precisa deixar espaço livre para rolar.
+    """
+    if e_celular():
+        altura = min(altura, 360)
     st.pydeck_chart(_DeckPronto(json_pronto, dica), height=altura)
