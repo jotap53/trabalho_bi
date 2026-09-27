@@ -19,8 +19,10 @@ from __future__ import annotations
 import base64
 import io
 import json
+import math
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -244,6 +246,53 @@ def grafico(fig: go.Figure, altura: int = 380, chave: str | None = None) -> None
         height=altura,
     )
     st.plotly_chart(fig, theme=None, key=chave, config={"displaylogo": False})
+
+
+def histograma(
+    valores: pd.Series, nbins: int, nome: str | None = None, **barras
+) -> go.Bar:
+    """Histograma já contado no servidor, com as mesmas faixas do Plotly.
+
+    `go.Histogram` envia todos os valores ao navegador para ele contar — em
+    torno de 1 MB por gráfico com a base completa. Aqui a contagem é feita em
+    Python e só as barras seguem para a tela. As faixas reproduzem o
+    algoritmo automático do plotly.js para `nbinsx` (passo "redondo", ajuste
+    de início para dados inteiros ou colados nas bordas, e remoção das faixas
+    vazias das pontas), de modo que o gráfico continua idêntico.
+    """
+    dados = pd.to_numeric(valores, errors="coerce").to_numpy(dtype=float)
+    dados = dados[np.isfinite(dados)]
+    minimo, maximo = float(dados.min()), float(dados.max())
+
+    bruto = (maximo - minimo) / nbins if maximo > minimo else 1.0
+    base = 10 ** math.floor(math.log10(bruto))
+    passo = base * next(r for r in (2, 5, 10) if bruto / base <= r)
+    inicio = math.ceil((minimo * 1.0001 - maximo * 0.0001) / passo) * passo - passo
+
+    def na_borda(v):
+        return (1 + (v - inicio) * 100 / passo) % 100 < 2
+
+    total = len(dados)
+    if (dados % 1 == 0).all():
+        if passo < 1:
+            inicio = minimo - 0.5 * passo
+        else:
+            inicio -= 0.5
+            if inicio + passo < minimo:
+                inicio += passo
+    elif na_borda(dados + passo / 2).sum() < total * 0.1 and (
+        na_borda(dados).sum() > total * 0.3 or na_borda(minimo) or na_borda(maximo)
+    ):
+        inicio += passo / 2 if inicio + passo / 2 < minimo else -passo / 2
+
+    quantidade = 1 + math.floor((maximo - inicio) / passo)
+    faixa = np.floor((dados - inicio) / passo + 1e-9).astype(int)
+    faixa = faixa[(faixa >= 0) & (faixa < quantidade)]
+    contagens = np.bincount(faixa, minlength=quantidade)
+    ocupadas = np.flatnonzero(contagens)
+    contagens = contagens[ocupadas[0] : ocupadas[-1] + 1]
+    centros = inicio + (ocupadas[0] + np.arange(len(contagens)) + 0.5) * passo
+    return go.Bar(x=centros, y=contagens, name=nome, **barras)
 
 
 def tabela(df: pd.DataFrame, rotulo: str = "Ver os dados desta visualização", nome: str = "dados") -> None:

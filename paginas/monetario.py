@@ -166,11 +166,11 @@ with direita:
         st.info("Sem valores positivos no recorte.")
     else:
         fig = go.Figure(
-            go.Histogram(
-                x=np.log10(positivos),
+            ui.histograma(
+                np.log10(positivos),
+                46,
                 marker=dict(color=ui.SERIE_1, cornerradius=2),
                 hovertemplate="%{y:,.0f} operações<extra></extra>",
-                nbinsx=46,
             )
         )
         marcas = [3, 4, 5, 6, 7, 8]
