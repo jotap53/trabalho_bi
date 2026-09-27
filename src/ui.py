@@ -17,6 +17,7 @@ Regras seguidas em todos os gráficos:
 from __future__ import annotations
 
 import base64
+import io
 import json
 from pathlib import Path
 
@@ -25,6 +26,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import pydeck as pdk
 import streamlit as st
+from PIL import Image
 from pydeck.bindings.json_tools import default_serialize
 
 # --- Superfícies e tintas -------------------------------------------------
@@ -159,9 +161,27 @@ def configurar_pagina(titulo: str, icone=None) -> None:
     )
 
 
+# Telas de alta densidade chegam a 3 pixels físicos por pixel CSS; acima
+# disso o navegador descartaria a resolução extra de qualquer forma.
+_DENSIDADE_MAXIMA = 3
+
+
 @st.cache_data(show_spinner=False)
-def _base64(caminho: str) -> str:
-    return base64.b64encode(Path(caminho).read_bytes()).decode("ascii")
+def _base64(caminho: str, largura: int) -> str:
+    """Imagem em WebP sem perdas, reduzida a `_DENSIDADE_MAXIMA` vezes a largura exibida.
+
+    A imagem embutida vai inteira em cada rerun de cada página; o PNG original
+    da logo tem 720 px para ser exibido com 128 a 150 px. WebP sem perdas
+    preserva cada pixel e ocupa cerca de 30% menos que o PNG equivalente.
+    """
+    imagem = Image.open(caminho)
+    limite = largura * _DENSIDADE_MAXIMA
+    if imagem.width > limite:
+        altura = round(imagem.height * limite / imagem.width)
+        imagem = imagem.resize((limite, altura), Image.Resampling.LANCZOS)
+    saida = io.BytesIO()
+    imagem.save(saida, format="WEBP", lossless=True, method=6)
+    return base64.b64encode(saida.getvalue()).decode("ascii")
 
 
 def imagem_nitida(caminho: Path, largura: int, alt: str = "") -> str:
@@ -174,7 +194,7 @@ def imagem_nitida(caminho: Path, largura: int, alt: str = "") -> str:
     if not caminho.exists():
         return ""
     return (
-        f'<img src="data:image/png;base64,{_base64(str(caminho))}" alt="{alt}" '
+        f'<img src="data:image/webp;base64,{_base64(str(caminho), largura)}" alt="{alt}" '
         f'style="width:{largura}px;height:auto;display:block;">'
     )
 
