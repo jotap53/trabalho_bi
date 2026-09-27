@@ -148,9 +148,11 @@ else:
         for i, faixa in enumerate(FAIXAS)
     )
     st.markdown(f'<div style="margin:2px 0 8px 2px;">{quadrados}</div>', unsafe_allow_html=True)
+    # O cifrão é escapado: dois "$" no mesmo texto viram uma fórmula LaTeX.
+    limite_90, limite_99 = (ui.brl(v).replace("$", r"\$") for v in (p90, p99))
     st.caption(
         f"Classificação por percentis da própria variável no recorte: percentil 90 em "
-        f"{ui.brl(p90)} e percentil 99 em {ui.brl(p99)}. Nenhuma observação é excluída — "
+        f"{limite_90} e percentil 99 em {limite_99}. Nenhuma observação é excluída — "
         "a escala contínua fica ilegível porque a distribuição é muito assimétrica, "
         "então a magnitude é lida em três passos de uma única matiz."
     )
