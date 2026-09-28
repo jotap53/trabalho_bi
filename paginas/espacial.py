@@ -64,7 +64,6 @@ imoveis = selecao.imoveis
 ui.cabecalho(
     "Dimensão espacial",
     "Onde estão os imóveis transacionados, por ponto, por densidade e por bairro",
-    dd.LOGO_PREFEITURA,
     "imóveis distintos (uma linha por ID_IMOVEL)",
 )
 filtros.aviso_recorte(selecao)

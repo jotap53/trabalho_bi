@@ -18,7 +18,6 @@ operacoes, imoveis = dd.carregar_bases()
 ui.cabecalho(
     "Metodologia e qualidade dos dados",
     "Da base pública às duas bases analíticas, e o que foi corrigido no caminho",
-    dd.LOGO_PREFEITURA,
     "as duas bases completas, sem filtros",
 )
 

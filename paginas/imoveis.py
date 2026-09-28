@@ -21,7 +21,6 @@ imoveis = selecao.imoveis
 ui.cabecalho(
     "Perfil dos imóveis",
     "Idade, década de construção, áreas, padrão construtivo e tipo de uso",
-    dd.LOGO_PREFEITURA,
     "imóveis distintos (uma linha por ID_IMOVEL)",
 )
 filtros.aviso_recorte(selecao)

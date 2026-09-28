@@ -68,13 +68,6 @@ def barra_lateral(operacoes: pd.DataFrame, imoveis: pd.DataFrame) -> Selecao:
     meses = sorted(operacoes["ANO_MES_CADASTRAMENTO"].dropna().unique())
 
     with st.sidebar:
-        from src import ui
-
-        st.markdown(
-            ui.imagem_nitida(dd.LOGO_PREFEITURA, 150, "Prefeitura de Fortaleza"),
-            unsafe_allow_html=True,
-        )
-        st.write("")
         st.markdown("#### Filtros")
         st.caption("Aplicados a todas as páginas do dashboard.")
 
@@ -197,6 +190,7 @@ def aviso_recorte(selecao: Selecao) -> None:
 
     operacoes = len(selecao.operacoes)
     fatia = operacoes / selecao.total_operacoes if selecao.total_operacoes else 0
+    st.write("")
     st.caption(
         f"**Recorte:** {selecao.descricao}  ·  {ui.num(operacoes)} operações "
         f"({ui.pct(fatia)} da base) e {ui.num(len(selecao.imoveis))} imóveis distintos"

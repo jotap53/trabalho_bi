@@ -85,7 +85,6 @@ operacoes, imoveis = selecao.operacoes, selecao.imoveis
 ui.cabecalho(
     "Valores monetários",
     "Quanto valem as transações, onde estão os valores mais altos e o que o cadastro registra",
-    dd.LOGO_PREFEITURA,
     "operações; medianas por bairro sobre imóveis distintos",
 )
 filtros.aviso_recorte(selecao)

@@ -163,11 +163,22 @@ def configurar_pagina(titulo: str, icone=None) -> None:
     O favicon é só o escudo, sem o texto do logotipo: aos 16 pixels de uma aba
     de navegador o texto viraria um borrão.
     """
-    from src.dados import FAVICON
+    from src.dados import FAVICON, LOGO_PREFEITURA
 
     if icone is None:
         icone = str(FAVICON) if FAVICON.exists() else "🏙️"
     st.set_page_config(page_title=f"{titulo} · ITBI Fortaleza", page_icon=icone, layout="wide")
+    if LOGO_PREFEITURA.exists():
+        # Acima do menu de navegação da barra lateral; o escudo sozinho
+        # substitui a logo quando a barra lateral está recolhida. O CSS abaixo
+        # fixa a largura em 128 px — a mesma usada antes no cabeçalho da
+        # página — porque os tamanhos prontos do st.logo (small/medium/large)
+        # não chegam lá e deixam a imagem pequena demais.
+        st.logo(
+            str(LOGO_PREFEITURA),
+            size="large",
+            icon_image=str(FAVICON) if FAVICON.exists() else None,
+        )
     st.markdown(
         f"""
         <style>
@@ -178,8 +189,21 @@ def configurar_pagina(titulo: str, icone=None) -> None:
           .rodape {{ color: {TINTA_3}; font-size: 0.78rem; line-height: 1.55;
                      border-top: 1px solid {GRADE}; padding-top: 0.8rem; margin-top: 2rem; }}
 
+          /* O contêiner do cabeçalho da barra lateral vem com altura fixa e
+             pequena (pensada para um logo minúsculo ao lado do botão de
+             recolher); sem `height: auto` o padding abaixo não tem efeito
+             visível porque o contêiner fica pequeno demais. */
+          [data-testid="stSidebarHeader"] {{
+            height: auto !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: flex-start !important;
+            padding: 2.2rem 0 1.25rem !important;
+          }}
+          [data-testid="stSidebarLogo"] {{ width: 120px !important; height: auto !important; }}
+
           /* Telas estreitas: o Streamlit empilha todas as colunas, o que deixa
-             um cartão por linha e a logo acima do título. */
+             um cartão por linha. */
           @media (max-width: 640px) {{
             .st-key-cartoes [data-testid="stHorizontalBlock"] {{
               flex-wrap: wrap; gap: 0.6rem;
@@ -195,18 +219,6 @@ def configurar_pagina(titulo: str, icone=None) -> None:
             }}
             .st-key-cartoes [data-testid="stMetricLabel"] > div {{ overflow: visible; }}
 
-            .st-key-cabecalho [data-testid="stHorizontalBlock"] {{
-              flex-wrap: nowrap; gap: 0.8rem;
-            }}
-            .st-key-cabecalho [data-testid="stColumn"]:first-child {{
-              flex: 0 0 64px !important; min-width: 64px !important;
-            }}
-            .st-key-cabecalho [data-testid="stColumn"]:last-child {{
-              flex: 1 1 0 !important; min-width: 0 !important; width: auto !important;
-            }}
-            .st-key-cabecalho [data-testid="stColumn"]:first-child img {{
-              width: 64px !important;
-            }}
             .st-key-cabecalho h3 {{ font-size: 1.35rem; padding: 0; }}
           }}
         </style>
@@ -253,21 +265,12 @@ def imagem_nitida(caminho: Path, largura: int, alt: str = "") -> str:
     )
 
 
-def cabecalho(titulo: str, subtitulo: str, logo, base: str) -> None:
-    """Cabeçalho com a logo oficial da Prefeitura e a base usada na página."""
-    # A proporcao precisa deixar a primeira coluna com mais de 128 px: o CSS do
-    # Streamlit limita a imagem a 100% da coluna, e com [1, 8] ela encolhia.
-    # A chave do contêiner vira a classe `st-key-cabecalho`, usada pelo CSS de
-    # telas estreitas para manter a logo ao lado do título.
+def cabecalho(titulo: str, subtitulo: str, base: str) -> None:
+    """Cabeçalho com o título da página e a base usada. A logo mora só na
+    barra lateral, acima do menu (ver `configurar_pagina`)."""
     with st.container(key="cabecalho"):
-        esquerda, direita = st.columns([1, 6], vertical_alignment="center")
-        with esquerda:
-            st.markdown(
-                imagem_nitida(logo, 128, "Prefeitura de Fortaleza"), unsafe_allow_html=True
-            )
-        with direita:
-            st.markdown(f"### {titulo}")
-            st.caption(f"{subtitulo}  ·  **Base:** {base}")
+        st.markdown(f"### {titulo}")
+        st.caption(f"{subtitulo}  ·  **Base:** {base}")
 
 
 def rodape(nota: str = "") -> None:
