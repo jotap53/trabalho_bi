@@ -21,7 +21,6 @@ imoveis = selecao.imoveis
 ui.cabecalho(
     "Perfil dos imóveis",
     "Idade, década de construção, áreas, padrão construtivo e tipo de uso",
-    dd.LOGO_PREFEITURA,
     "imóveis distintos (uma linha por ID_IMOVEL)",
 )
 filtros.aviso_recorte(selecao)
@@ -176,12 +175,12 @@ with distribuicao:
     for coluna, nome, cor in series:
         valores = imoveis.loc[imoveis[coluna].between(1, 1000), coluna]
         fig.add_trace(
-            go.Histogram(
-                x=valores,
-                name=nome,
+            ui.histograma(
+                valores,
+                50,
+                nome,
                 marker=dict(color=cor, cornerradius=2),
                 opacity=0.72,
-                nbinsx=50,
                 hovertemplate=nome + ": %{y:,.0f} imóveis<br>%{x:.0f} m²<extra></extra>",
             )
         )

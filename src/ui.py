@@ -17,12 +17,20 @@ Regras seguidas em todos os gráficos:
 from __future__ import annotations
 
 import base64
+import io
+import json
+import math
+import re
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
+import pydeck as pdk
 import streamlit as st
+from PIL import Image
+from pydeck.bindings.json_tools import default_serialize
 
 # --- Superfícies e tintas -------------------------------------------------
 SUPERFICIE = "#fcfcfb"
@@ -130,17 +138,47 @@ def pct(valor, casas: int = 1) -> str:
 
 
 # --- Estrutura da página --------------------------------------------------
+# "Mobi" cobre os navegadores de celular Android e iOS; tablets Android e
+# iPads recentes não o incluem e ficam com o layout de desktop, que lhes serve.
+_AGENTE_CELULAR = re.compile(r"Mobi|iPhone|iPod", re.IGNORECASE)
+
+
+def e_celular() -> bool:
+    """Indica se a página foi aberta em um celular, pelo User-Agent.
+
+    O CSS resolve a disposição dos elementos do Streamlit, mas não alcança o
+    layout interno dos gráficos Plotly nem a altura do mapa, que são definidos
+    no servidor: para esses, o dashboard precisa saber que a tela é estreita.
+    """
+    try:
+        agente = st.context.headers.get("User-Agent", "")
+    except Exception:
+        return False
+    return bool(_AGENTE_CELULAR.search(agente or ""))
+
+
 def configurar_pagina(titulo: str, icone=None) -> None:
     """Configura a página e usa o escudo da Prefeitura como ícone da aba.
 
     O favicon é só o escudo, sem o texto do logotipo: aos 16 pixels de uma aba
     de navegador o texto viraria um borrão.
     """
-    from src.dados import FAVICON
+    from src.dados import FAVICON, LOGO_PREFEITURA
 
     if icone is None:
         icone = str(FAVICON) if FAVICON.exists() else "🏙️"
     st.set_page_config(page_title=f"{titulo} · ITBI Fortaleza", page_icon=icone, layout="wide")
+    if LOGO_PREFEITURA.exists():
+        # Acima do menu de navegação da barra lateral; o escudo sozinho
+        # substitui a logo quando a barra lateral está recolhida. O CSS abaixo
+        # fixa a largura em 128 px — a mesma usada antes no cabeçalho da
+        # página — porque os tamanhos prontos do st.logo (small/medium/large)
+        # não chegam lá e deixam a imagem pequena demais.
+        st.logo(
+            str(LOGO_PREFEITURA),
+            size="large",
+            icon_image=str(FAVICON) if FAVICON.exists() else None,
+        )
     st.markdown(
         f"""
         <style>
@@ -150,15 +188,66 @@ def configurar_pagina(titulo: str, icone=None) -> None:
           h1, h2, h3 {{ color: {TINTA_1}; }}
           .rodape {{ color: {TINTA_3}; font-size: 0.78rem; line-height: 1.55;
                      border-top: 1px solid {GRADE}; padding-top: 0.8rem; margin-top: 2rem; }}
+
+          /* O contêiner do cabeçalho da barra lateral vem com altura fixa e
+             pequena (pensada para um logo minúsculo ao lado do botão de
+             recolher); sem `height: auto` o padding abaixo não tem efeito
+             visível porque o contêiner fica pequeno demais. */
+          [data-testid="stSidebarHeader"] {{
+            height: auto !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: flex-start !important;
+            padding: 2.2rem 0 1.25rem !important;
+          }}
+          [data-testid="stSidebarLogo"] {{ width: 120px !important; height: auto !important; }}
+
+          /* Telas estreitas: o Streamlit empilha todas as colunas, o que deixa
+             um cartão por linha. */
+          @media (max-width: 640px) {{
+            .st-key-cartoes [data-testid="stHorizontalBlock"] {{
+              flex-wrap: wrap; gap: 0.6rem;
+            }}
+            .st-key-cartoes [data-testid="stColumn"] {{
+              flex: 1 1 calc(50% - 0.6rem) !important;
+              min-width: calc(50% - 0.6rem) !important;
+            }}
+            .st-key-cartoes [data-testid="stMetric"] {{ padding: 0.7rem 0.8rem; }}
+            .st-key-cartoes [data-testid="stMetricValue"] {{ font-size: 1.25rem; }}
+            .st-key-cartoes [data-testid="stMetricLabel"] p {{
+              font-size: 0.8rem; white-space: normal; overflow: visible;
+            }}
+            .st-key-cartoes [data-testid="stMetricLabel"] > div {{ overflow: visible; }}
+
+            .st-key-cabecalho h3 {{ font-size: 1.35rem; padding: 0; }}
+          }}
         </style>
         """,
         unsafe_allow_html=True,
     )
 
 
+# Telas de alta densidade chegam a 3 pixels físicos por pixel CSS; acima
+# disso o navegador descartaria a resolução extra de qualquer forma.
+_DENSIDADE_MAXIMA = 3
+
+
 @st.cache_data(show_spinner=False)
-def _base64(caminho: str) -> str:
-    return base64.b64encode(Path(caminho).read_bytes()).decode("ascii")
+def _base64(caminho: str, largura: int) -> str:
+    """Imagem em WebP sem perdas, reduzida a `_DENSIDADE_MAXIMA` vezes a largura exibida.
+
+    A imagem embutida vai inteira em cada rerun de cada página; o PNG original
+    da logo tem 720 px para ser exibido com 128 a 150 px. WebP sem perdas
+    preserva cada pixel e ocupa cerca de 30% menos que o PNG equivalente.
+    """
+    imagem = Image.open(caminho)
+    limite = largura * _DENSIDADE_MAXIMA
+    if imagem.width > limite:
+        altura = round(imagem.height * limite / imagem.width)
+        imagem = imagem.resize((limite, altura), Image.Resampling.LANCZOS)
+    saida = io.BytesIO()
+    imagem.save(saida, format="WEBP", lossless=True, method=6)
+    return base64.b64encode(saida.getvalue()).decode("ascii")
 
 
 def imagem_nitida(caminho: Path, largura: int, alt: str = "") -> str:
@@ -171,21 +260,15 @@ def imagem_nitida(caminho: Path, largura: int, alt: str = "") -> str:
     if not caminho.exists():
         return ""
     return (
-        f'<img src="data:image/png;base64,{_base64(str(caminho))}" alt="{alt}" '
+        f'<img src="data:image/webp;base64,{_base64(str(caminho), largura)}" alt="{alt}" '
         f'style="width:{largura}px;height:auto;display:block;">'
     )
 
 
-def cabecalho(titulo: str, subtitulo: str, logo, base: str) -> None:
-    """Cabeçalho com a logo oficial da Prefeitura e a base usada na página."""
-    # A proporcao precisa deixar a primeira coluna com mais de 128 px: o CSS do
-    # Streamlit limita a imagem a 100% da coluna, e com [1, 8] ela encolhia.
-    esquerda, direita = st.columns([1, 6], vertical_alignment="center")
-    with esquerda:
-        st.markdown(
-            imagem_nitida(logo, 128, "Prefeitura de Fortaleza"), unsafe_allow_html=True
-        )
-    with direita:
+def cabecalho(titulo: str, subtitulo: str, base: str) -> None:
+    """Cabeçalho com o título da página e a base usada. A logo mora só na
+    barra lateral, acima do menu (ver `configurar_pagina`)."""
+    with st.container(key="cabecalho"):
         st.markdown(f"### {titulo}")
         st.caption(f"{subtitulo}  ·  **Base:** {base}")
 
@@ -203,9 +286,12 @@ def rodape(nota: str = "") -> None:
 
 def cartoes(itens) -> None:
     """Fileira de cartões de indicador — quando o número é o próprio gráfico."""
-    for coluna, item in zip(st.columns(len(itens)), itens):
-        rotulo, valor, ajuda = item
-        coluna.metric(rotulo, valor, help=ajuda, border=True)
+    # A chave vira a classe `st-key-cartoes`: em telas estreitas o CSS põe
+    # dois cartões por linha em vez de empilhá-los um a um.
+    with st.container(key="cartoes"):
+        for coluna, item in zip(st.columns(len(itens)), itens):
+            rotulo, valor, ajuda = item
+            coluna.metric(rotulo, valor, help=ajuda, border=True)
 
 
 def grafico(fig: go.Figure, altura: int = 380, chave: str | None = None) -> None:
@@ -214,13 +300,104 @@ def grafico(fig: go.Figure, altura: int = 380, chave: str | None = None) -> None
     `theme=None` é obrigatório: o tema automático do Streamlit sobrescreveria
     a paleta validada por uma paleta própria.
     """
+    config = {"displaylogo": False}
+    if e_celular():
+        # Gráficos que precisam de mais altura na tela estreita (barras com
+        # rótulos em várias linhas) já trazem a altura mínima na figura.
+        altura = max(altura, fig.layout.height or 0)
+        _compactar(fig)
+        # No toque, a barra de ferramentas fica sempre visível sobre o título.
+        config["displayModeBar"] = False
     fig.update_layout(
         template=_TEMPLATE,
         paper_bgcolor=SUPERFICIE,
         plot_bgcolor=SUPERFICIE,
         height=altura,
     )
-    st.plotly_chart(fig, theme=None, key=chave, config={"displaylogo": False})
+    st.plotly_chart(fig, theme=None, key=chave, config=config)
+
+
+def _quebrar(texto: str, limite: int) -> list[str]:
+    """Quebra o texto em linhas de até `limite` caracteres, entre palavras."""
+    linhas: list[str] = []
+    for palavra in texto.split():
+        if linhas and len(linhas[-1]) + 1 + len(palavra) <= limite:
+            linhas[-1] += " " + palavra
+        else:
+            linhas.append(palavra)
+    return linhas
+
+
+def _compactar(fig: go.Figure) -> None:
+    """Ajustes de layout para a largura de um celular.
+
+    O Plotly não quebra o título, que é cortado na borda da tela, e a legenda
+    horizontal no topo passa a ocupar duas linhas e cobre o título. O título
+    é quebrado entre palavras e a legenda desce para baixo do gráfico.
+    """
+    titulo = fig.layout.title.text
+    linhas = _quebrar(titulo, 40) if titulo else []
+    margem = fig.layout.margin
+    topo = (margem.t if margem.t is not None else 64) + 20 * max(len(linhas) - 1, 0)
+    fig.update_layout(
+        title=dict(text="<br>".join(linhas), font=dict(size=15)) if linhas else {},
+        margin=dict(t=topo),
+    )
+    series = [t for t in fig.data if t.name and t.showlegend is not False]
+    if len(series) >= 2:
+        # Ancorada na base da figura, e não do gráfico, a legenda fica abaixo
+        # do título do eixo x em vez de disputar espaço com ele.
+        fig.update_layout(
+            legend=dict(orientation="h", yref="container", y=0, yanchor="bottom", xanchor="left", x=0),
+            margin=dict(b=(margem.b if margem.b is not None else 8) + 44),
+        )
+
+
+def histograma(
+    valores: pd.Series, nbins: int, nome: str | None = None, **barras
+) -> go.Bar:
+    """Histograma já contado no servidor, com as mesmas faixas do Plotly.
+
+    `go.Histogram` envia todos os valores ao navegador para ele contar — em
+    torno de 1 MB por gráfico com a base completa. Aqui a contagem é feita em
+    Python e só as barras seguem para a tela. As faixas reproduzem o
+    algoritmo automático do plotly.js para `nbinsx` (passo "redondo", ajuste
+    de início para dados inteiros ou colados nas bordas, e remoção das faixas
+    vazias das pontas), de modo que o gráfico continua idêntico.
+    """
+    dados = pd.to_numeric(valores, errors="coerce").to_numpy(dtype=float)
+    dados = dados[np.isfinite(dados)]
+    minimo, maximo = float(dados.min()), float(dados.max())
+
+    bruto = (maximo - minimo) / nbins if maximo > minimo else 1.0
+    base = 10 ** math.floor(math.log10(bruto))
+    passo = base * next(r for r in (2, 5, 10) if bruto / base <= r)
+    inicio = math.ceil((minimo * 1.0001 - maximo * 0.0001) / passo) * passo - passo
+
+    def na_borda(v):
+        return (1 + (v - inicio) * 100 / passo) % 100 < 2
+
+    total = len(dados)
+    if (dados % 1 == 0).all():
+        if passo < 1:
+            inicio = minimo - 0.5 * passo
+        else:
+            inicio -= 0.5
+            if inicio + passo < minimo:
+                inicio += passo
+    elif na_borda(dados + passo / 2).sum() < total * 0.1 and (
+        na_borda(dados).sum() > total * 0.3 or na_borda(minimo) or na_borda(maximo)
+    ):
+        inicio += passo / 2 if inicio + passo / 2 < minimo else -passo / 2
+
+    quantidade = 1 + math.floor((maximo - inicio) / passo)
+    faixa = np.floor((dados - inicio) / passo + 1e-9).astype(int)
+    faixa = faixa[(faixa >= 0) & (faixa < quantidade)]
+    contagens = np.bincount(faixa, minlength=quantidade)
+    ocupadas = np.flatnonzero(contagens)
+    contagens = contagens[ocupadas[0] : ocupadas[-1] + 1]
+    centros = inicio + (ocupadas[0] + np.arange(len(contagens)) + 0.5) * passo
+    return go.Bar(x=centros, y=contagens, name=nome, **barras)
 
 
 def tabela(df: pd.DataFrame, rotulo: str = "Ver os dados desta visualização", nome: str = "dados") -> None:
@@ -249,10 +426,11 @@ def barras_horizontais(dados, categoria, valor, titulo, formato=None, cor_padrao
     """
     formato = formato or (lambda v: num(v))
     ordenado = dados.sort_values(valor)
+    nomes = ordenado[categoria].astype(str)
     fig = go.Figure(
         go.Bar(
             x=ordenado[valor],
-            y=ordenado[categoria].astype(str),
+            y=nomes,
             orientation="h",
             marker=dict(color=_cores(ordenado[categoria], cor_padrao), cornerradius=4),
             text=[formato(v) for v in ordenado[valor]],
@@ -268,6 +446,19 @@ def barras_horizontais(dados, categoria, valor, titulo, formato=None, cor_padrao
         yaxis=dict(showgrid=False, tickfont=dict(color=TINTA_2, size=12)),
         margin=dict(l=8, r=84, t=64, b=8),
     )
+    if e_celular():
+        # Nomes longos de zona e bairro espremeriam as barras na tela estreita.
+        # Abreviar confundiria zonas que só diferem no fim ("Moderada 1" e
+        # "Moderada 2"), então o nome é quebrado em linhas e a figura cresce.
+        rotulos = [_quebrar(n, 18) for n in nomes]
+        linhas = max(len(r) for r in rotulos) if rotulos else 1
+        fig.update_yaxes(
+            tickmode="array",
+            tickvals=list(nomes),
+            ticktext=["<br>".join(r) for r in rotulos],
+            tickfont=dict(size=11),
+        )
+        fig.update_layout(height=len(nomes) * (13 * linhas + 10) + 110)
     return fig
 
 
@@ -306,3 +497,67 @@ def rgb(hexadecimal: str, alpha: int | None = None) -> list[int]:
     texto = hexadecimal.lstrip("#")
     canais = [int(texto[i : i + 2], 16) for i in (0, 2, 4)]
     return canais + [alpha] if alpha is not None else canais
+
+
+def pontos_mapa(df: pd.DataFrame, colunas: dict[str, str] | None = None) -> pd.DataFrame:
+    """Reduz a base ao mínimo que o mapa precisa, com nomes de coluna curtos.
+
+    Cada linha vira um objeto JSON no navegador, então o nome da coluna se
+    repete em todos os pontos: `x`/`y` em vez de LONGITUDE/LATITUDE. As
+    coordenadas ficam com 5 casas decimais (cerca de 1 m no terreno), bem
+    abaixo da precisão da conversão de UTM feita no tratamento.
+    """
+    colunas = colunas or {}
+    reduzido = pd.DataFrame(
+        {
+            "x": df["LONGITUDE"].round(5).to_numpy(),
+            "y": df["LATITUDE"].round(5).to_numpy(),
+        }
+    )
+    for origem, destino in colunas.items():
+        reduzido[destino] = df[origem].to_numpy()
+    return reduzido
+
+
+def json_mapa(camadas: list[pdk.Layer], centro: pd.DataFrame) -> str:
+    """JSON do mapa base claro com as camadas, centrado na mediana dos pontos.
+
+    Sai sem a indentação que o pydeck aplica por padrão: com dezenas de
+    milhares de pontos, ela sozinha era boa parte dos megabytes enviados ao
+    navegador. Fica separado de `mapa` para que as páginas guardem o JSON em
+    cache por recorte e não o refaçam a cada visita.
+    """
+    deck = pdk.Deck(
+        layers=camadas,
+        initial_view_state=pdk.ViewState(
+            latitude=float(centro["y"].median()),
+            longitude=float(centro["x"].median()),
+            zoom=11.1,
+            pitch=0,
+        ),
+        map_style=pdk.map_styles.CARTO_LIGHT,
+        map_provider="carto",
+    )
+    return json.dumps(deck, sort_keys=True, default=default_serialize, separators=(",", ":"))
+
+
+class _DeckPronto(pdk.Deck):
+    """Deck que entrega ao Streamlit um JSON já serializado."""
+
+    def __init__(self, json_pronto: str, dica: dict | None):
+        super().__init__(layers=[], tooltip=dica)
+        self._json_pronto = json_pronto
+
+    def to_json(self) -> str:
+        return self._json_pronto
+
+
+def mapa(json_pronto: str, dica: dict | None, altura: int = 520) -> None:
+    """Desenha um mapa gerado por `json_mapa`.
+
+    No celular o mapa fica mais baixo: arrastar o dedo sobre ele move o mapa
+    e não a página, então ele precisa deixar espaço livre para rolar.
+    """
+    if e_celular():
+        altura = min(altura, 360)
+    st.pydeck_chart(_DeckPronto(json_pronto, dica), height=altura)

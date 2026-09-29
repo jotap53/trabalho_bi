@@ -31,6 +31,7 @@ def serie_mensal(operacoes: pd.DataFrame, titulo: str = "Evolução mensal das o
     participaram de mais de uma operação no mesmo mês.
     """
     resumo = resumo_mensal(operacoes)
+    celular = ui.e_celular()
     fig = go.Figure()
     for coluna, nome, cor in (
         ("operacoes", "Operações", ui.SERIE_1),
@@ -47,8 +48,10 @@ def serie_mensal(operacoes: pd.DataFrame, titulo: str = "Evolução mensal das o
             )
         )
 
-    # Rótulo direto no último ponto de cada série, além da legenda.
-    if not resumo.empty:
+    # Rótulo direto no último ponto de cada série, além da legenda. No celular
+    # ele sai: a margem que ele exige tomaria quase metade da largura, e a
+    # legenda continua nomeando as duas séries.
+    if not resumo.empty and not celular:
         ultimo = resumo.iloc[-1]
         for coluna, nome, cor, deslocamento in (
             ("operacoes", "Operações", ui.SERIE_1, 13),
@@ -67,9 +70,9 @@ def serie_mensal(operacoes: pd.DataFrame, titulo: str = "Evolução mensal das o
     fig.update_layout(
         title=titulo,
         hovermode="x unified",
-        margin=dict(l=8, r=146, t=64, b=8),
+        margin=dict(l=8, r=16 if celular else 146, t=64, b=8),
     )
-    fig.update_xaxes(dtick="M3", tickformat="%m/%y")
+    fig.update_xaxes(dtick="M6" if celular else "M3", tickformat="%m/%y")
     fig.update_yaxes(title_text="Quantidade")
     # Sem alcance explicito o Plotly acrescenta meses futuros que nao existem
     # na base, dando a impressao de um periodo maior do que o coberto.

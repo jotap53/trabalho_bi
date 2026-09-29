@@ -13,9 +13,29 @@ operacoes, imoveis = selecao.operacoes, selecao.imoveis
 ui.cabecalho(
     "Transações imobiliárias de Fortaleza — ITBI",
     "Análise exploratória de 2022 a 2026 · Seminário 01 de Inteligência de Negócios",
-    dd.LOGO_PREFEITURA,
     "operações e imóveis distintos",
 )
+st.write("")
+with st.expander("Sobre este projeto"):
+    st.markdown(
+        """
+Este dashboard foi desenvolvido exclusivamente para *fins acadêmicos*, como
+parte do *Seminário 01 da disciplina de Inteligência de Negócios*.
+
+*Esta não é uma página oficial da Prefeitura de Fortaleza.*
+Os dados utilizados são provenientes da base de **dados abertos disponibilizada
+pela Prefeitura de Fortaleza/SEFIN**, sendo empregados neste trabalho
+exclusivamente para fins de análise e visualização de dados.
+
+*Equipe:*
+- [Maria Eduarda](https://www.linkedin.com/in/maria-eduarda-s-martins-1b5071308/)
+- [Valberto Feitosa](https://www.linkedin.com/in/valberto-feitosa-7239511b1/)
+- [João Pedro Martins](https://www.linkedin.com/in/jpmartinsa/)
+- [Jordan Elizeu](https://www.linkedin.com/in/jordanelizeu/)
+- [Jordan Elias](https://www.linkedin.com/in/jordan-elias-090311186/)
+        """
+    )
+
 filtros.aviso_recorte(selecao)
 
 operacoes_por_imovel = len(operacoes) / len(imoveis) if len(imoveis) else 0

@@ -7,11 +7,56 @@ cadastro mais recente, para não ser contado de novo a cada operação.
 
 from __future__ import annotations
 
+import numpy as np
 import pydeck as pdk
 import streamlit as st
 
 from src import dados as dd
 from src import filtros, graficos, ui
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def _mapa_territorio(ids: np.ndarray, modo: str) -> str:
+    """JSON do mapa do recorte, em cache pelos imóveis do recorte e pelo modo.
+
+    Voltar à página com os mesmos filtros reaproveita o JSON pronto em vez de
+    refazê-lo. O limite de entradas segura a memória do servidor: cada mapa
+    com a base completa ocupa alguns megabytes.
+    """
+    base = dd.carregar_bases()[1]
+    com_coordenada = base[base["ID_IMOVEL"].isin(ids)].dropna(subset=["LATITUDE", "LONGITUDE"])
+
+    if modo == "Pontos individuais":
+        pontos = ui.pontos_mapa(
+            com_coordenada, {"BAIRRO": "b", "TIPO_USO_IMOVEL": "u", "FAIXA_IDADE_IMOVEL": "i"}
+        )
+        camada = pdk.Layer(
+            "ScatterplotLayer",
+            data=pontos,
+            get_position="[x, y]",
+            get_fill_color=ui.rgb(ui.SERIE_1, 150),
+            get_radius=28,
+            radius_min_pixels=1,
+            radius_max_pixels=6,
+            pickable=True,
+        )
+    else:
+        # O hexágono só agrega posições: os atributos do tooltip de pontos não
+        # precisam viajar até o navegador neste modo.
+        pontos = ui.pontos_mapa(com_coordenada)
+        camada = pdk.Layer(
+            "HexagonLayer",
+            data=pontos,
+            get_position="[x, y]",
+            radius=320,
+            elevation_scale=0,
+            extruded=False,
+            opacity=0.82,
+            color_range=[ui.rgb(c) for c in ui.SEQUENCIAL[1:]],
+            pickable=True,
+        )
+    return ui.json_mapa([camada], pontos)
+
 
 selecao = st.session_state["selecao"]
 imoveis = selecao.imoveis
@@ -19,7 +64,6 @@ imoveis = selecao.imoveis
 ui.cabecalho(
     "Dimensão espacial",
     "Onde estão os imóveis transacionados, por ponto, por densidade e por bairro",
-    dd.LOGO_PREFEITURA,
     "imóveis distintos (uma linha por ID_IMOVEL)",
 )
 filtros.aviso_recorte(selecao)
@@ -50,29 +94,9 @@ modo = st.radio(
     key="esp_modo",
 )
 
-pontos = imoveis[["LATITUDE", "LONGITUDE", "BAIRRO", "TIPO_USO_IMOVEL", "FAIXA_IDADE_IMOVEL"]].dropna(
-    subset=["LATITUDE", "LONGITUDE"]
-)
-vista = pdk.ViewState(
-    latitude=float(pontos["LATITUDE"].median()),
-    longitude=float(pontos["LONGITUDE"].median()),
-    zoom=11.1,
-    pitch=0,
-)
-
 if modo == "Pontos individuais":
-    camada = pdk.Layer(
-        "ScatterplotLayer",
-        data=pontos,
-        get_position="[LONGITUDE, LATITUDE]",
-        get_fill_color=ui.rgb(ui.SERIE_1, 150),
-        get_radius=28,
-        radius_min_pixels=1,
-        radius_max_pixels=6,
-        pickable=True,
-    )
     dica = {
-        "html": "<b>{BAIRRO}</b><br/>{TIPO_USO_IMOVEL} · {FAIXA_IDADE_IMOVEL}",
+        "html": "<b>{b}</b><br/>{u} · {i}",
         "style": {"backgroundColor": "white", "color": ui.TINTA_1, "fontSize": "12px"},
     }
     legenda = (
@@ -80,17 +104,6 @@ if modo == "Pontos individuais":
         "mostra onde o mercado se concentra."
     )
 else:
-    camada = pdk.Layer(
-        "HexagonLayer",
-        data=pontos,
-        get_position="[LONGITUDE, LATITUDE]",
-        radius=320,
-        elevation_scale=0,
-        extruded=False,
-        opacity=0.82,
-        color_range=[ui.rgb(c) for c in ui.SEQUENCIAL[1:]],
-        pickable=True,
-    )
     dica = {
         "html": "<b>{elevationValue} imóveis</b> neste hexágono",
         "style": {"backgroundColor": "white", "color": ui.TINTA_1, "fontSize": "12px"},
@@ -100,16 +113,7 @@ else:
         "Resolve a sobreposição que o mapa de pontos produz nas áreas mais densas."
     )
 
-st.pydeck_chart(
-    pdk.Deck(
-        layers=[camada],
-        initial_view_state=vista,
-        map_style=pdk.map_styles.CARTO_LIGHT,
-        map_provider="carto",
-        tooltip=dica,
-    ),
-    height=520,
-)
+ui.mapa(_mapa_territorio(imoveis["ID_IMOVEL"].to_numpy(), modo), dica)
 st.caption(legenda)
 
 st.divider()

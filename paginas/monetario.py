@@ -26,13 +26,65 @@ VARIAVEIS = {
     "VL_LANCAMENTO_IPTU": "Lançamento do IPTU",
 }
 
+FAIXAS = ["Abaixo do percentil 90", "Entre os percentis 90 e 99", "1% de maiores valores"]
+CORES = dict(zip(FAIXAS, ui.ORDINAL_3))
+
+
+@st.cache_data(show_spinner=False, max_entries=8)
+def _mapa_valores(ids: np.ndarray, variavel: str) -> tuple[str, float, float] | None:
+    """JSON do mapa de percentis e os limites p90/p99, em cache por recorte.
+
+    A chave são os imóveis do recorte e a variável: voltar à página com os
+    mesmos filtros reaproveita o mapa pronto. O limite de entradas segura a
+    memória do servidor, já que cada mapa da base completa tem alguns MB.
+    """
+    base = dd.carregar_bases()[1]
+    mapa = base.loc[base["ID_IMOVEL"].isin(ids), ["LATITUDE", "LONGITUDE", "BAIRRO", variavel]].dropna()
+    if mapa.empty:
+        return None
+
+    p90, p99 = mapa[variavel].quantile([0.90, 0.99])
+    mapa["faixa"] = np.select(
+        [mapa[variavel] >= p99, mapa[variavel] >= p90], [FAIXAS[2], FAIXAS[1]], default=FAIXAS[0]
+    )
+
+    # A cor sozinha não resolve: nove de cada dez imóveis caem na faixa mais
+    # baixa e cobririam as outras duas. Tamanho e opacidade entram como
+    # codificação secundária, e a ordem de desenho põe os maiores valores por
+    # cima — sem alterar os passos de cor validados da rampa.
+    opacidade = dict(zip(FAIXAS, (70, 205, 240)))
+    raio = dict(zip(FAIXAS, (24, 44, 70)))
+
+    # Muitos imóveis repetem o mesmo valor: formatar só os valores distintos
+    # e mapear de volta evita dezenas de milhares de chamadas a `ui.brl`.
+    distintos = mapa[variavel].unique()
+    mapa["valor_formatado"] = mapa[variavel].map(dict(zip(distintos, map(ui.brl, distintos))))
+    pontos = ui.pontos_mapa(mapa, {"BAIRRO": "b", "valor_formatado": "v", "faixa": "f"})
+
+    # Uma camada por faixa: cor e raio viram constantes da camada em vez de
+    # se repetirem em cada ponto, e a ordem das camadas é a ordem de desenho.
+    camadas = [
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=pontos[pontos["f"] == faixa],
+            get_position="[x, y]",
+            get_fill_color=ui.rgb(CORES[faixa], opacidade[faixa]),
+            get_radius=raio[faixa],
+            radius_min_pixels=1,
+            radius_max_pixels=11,
+            pickable=True,
+        )
+        for faixa in FAIXAS
+    ]
+    return ui.json_mapa(camadas, pontos), float(p90), float(p99)
+
+
 selecao = st.session_state["selecao"]
 operacoes, imoveis = selecao.operacoes, selecao.imoveis
 
 ui.cabecalho(
     "Valores monetários",
     "Quanto valem as transações, onde estão os valores mais altos e o que o cadastro registra",
-    dd.LOGO_PREFEITURA,
     "operações; medianas por bairro sobre imóveis distintos",
 )
 filtros.aviso_recorte(selecao)
@@ -74,70 +126,32 @@ variavel = st.selectbox(
     key="mon_variavel",
 )
 
-mapa = imoveis[["LATITUDE", "LONGITUDE", "BAIRRO", variavel]].dropna()
-if mapa.empty:
+mapa = _mapa_valores(imoveis["ID_IMOVEL"].to_numpy(), variavel)
+if mapa is None:
     st.info("Nenhum imóvel do recorte tem essa variável preenchida.")
 else:
-    p90, p99 = mapa[variavel].quantile([0.90, 0.99])
-    faixas = ["Abaixo do percentil 90", "Entre os percentis 90 e 99", "1% de maiores valores"]
-    mapa["faixa"] = np.select(
-        [mapa[variavel] >= p99, mapa[variavel] >= p90], [faixas[2], faixas[1]], default=faixas[0]
-    )
-    cores = dict(zip(faixas, ui.ORDINAL_3))
-
-    # A cor sozinha não resolve: nove de cada dez imóveis caem na faixa mais
-    # baixa e cobririam as outras duas. Tamanho e opacidade entram como
-    # codificação secundária, e a ordem de desenho põe os maiores valores por
-    # cima — sem alterar os passos de cor validados da rampa.
-    opacidade = dict(zip(faixas, (70, 205, 240)))
-    raio = dict(zip(faixas, (24, 44, 70)))
-    ordem_desenho = {faixa: indice for indice, faixa in enumerate(faixas)}
-
-    mapa["cor"] = mapa["faixa"].map(lambda f: ui.rgb(cores[f], opacidade[f]))
-    mapa["raio"] = mapa["faixa"].map(raio)
-    mapa["valor_formatado"] = mapa[variavel].map(ui.brl)
-    mapa = mapa.sort_values("faixa", key=lambda s: s.map(ordem_desenho))
-
-    st.pydeck_chart(
-        pdk.Deck(
-            layers=[
-                pdk.Layer(
-                    "ScatterplotLayer",
-                    data=mapa,
-                    get_position="[LONGITUDE, LATITUDE]",
-                    get_fill_color="cor",
-                    get_radius="raio",
-                    radius_min_pixels=1,
-                    radius_max_pixels=11,
-                    pickable=True,
-                )
-            ],
-            initial_view_state=pdk.ViewState(
-                latitude=float(mapa["LATITUDE"].median()),
-                longitude=float(mapa["LONGITUDE"].median()),
-                zoom=11.1,
-            ),
-            map_style=pdk.map_styles.CARTO_LIGHT,
-            map_provider="carto",
-            tooltip={
-                "html": "<b>{BAIRRO}</b><br/>{valor_formatado}<br/>{faixa}",
-                "style": {"backgroundColor": "white", "color": ui.TINTA_1, "fontSize": "12px"},
-            },
-        ),
-        height=520,
+    json_mapa, p90, p99 = mapa
+    ui.mapa(
+        json_mapa,
+        {
+            "html": "<b>{b}</b><br/>{v}<br/>{f}",
+            "style": {"backgroundColor": "white", "color": ui.TINTA_1, "fontSize": "12px"},
+        },
     )
 
     quadrados = "".join(
         '<span style="display:inline-flex;align-items:center;gap:6px;margin-right:22px;">'
         f'<span style="width:{6 + 5 * i}px;height:{6 + 5 * i}px;border-radius:50%;'
-        f'display:inline-block;background:{cores[faixa]};"></span>'
+        f'display:inline-block;background:{CORES[faixa]};"></span>'
         f'<span style="color:{ui.TINTA_2};font-size:12.5px;">{faixa}</span></span>'
-        for i, faixa in enumerate(faixas)
+        for i, faixa in enumerate(FAIXAS)
     )
     st.markdown(f'<div style="margin:2px 0 8px 2px;">{quadrados}</div>', unsafe_allow_html=True)
+    # O cifrão é escapado: dois "$" no mesmo texto viram uma fórmula LaTeX.
+    limite_90, limite_99 = (ui.brl(v).replace("$", r"\$") for v in (p90, p99))
     st.caption(
         f"Classificação por percentis da própria variável no recorte: percentil 90 em "
-        f"{ui.brl(p90)} e percentil 99 em {ui.brl(p99)}. Nenhuma observação é excluída — "
+        f"{limite_90} e percentil 99 em {limite_99}. Nenhuma observação é excluída — "
         "a escala contínua fica ilegível porque a distribuição é muito assimétrica, "
         "então a magnitude é lida em três passos de uma única matiz."
     )
@@ -174,11 +188,11 @@ with direita:
         st.info("Sem valores positivos no recorte.")
     else:
         fig = go.Figure(
-            go.Histogram(
-                x=np.log10(positivos),
+            ui.histograma(
+                np.log10(positivos),
+                46,
                 marker=dict(color=ui.SERIE_1, cornerradius=2),
                 hovertemplate="%{y:,.0f} operações<extra></extra>",
-                nbinsx=46,
             )
         )
         marcas = [3, 4, 5, 6, 7, 8]

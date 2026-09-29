@@ -19,7 +19,6 @@ operacoes = selecao.operacoes
 ui.cabecalho(
     "Dimensão temporal",
     "Quando as transações acontecem, em que ritmo e com que sazonalidade",
-    dd.LOGO_PREFEITURA,
     "operações (uma linha por NUM_DTI)",
 )
 filtros.aviso_recorte(selecao)

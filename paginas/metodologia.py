@@ -18,7 +18,6 @@ operacoes, imoveis = dd.carregar_bases()
 ui.cabecalho(
     "Metodologia e qualidade dos dados",
     "Da base pública às duas bases analíticas, e o que foi corrigido no caminho",
-    dd.LOGO_PREFEITURA,
     "as duas bases completas, sem filtros",
 )
 
@@ -59,8 +58,12 @@ chave única e reescreve o rótulo com os acentos corretos:
 **{zonas_originais} -> {zonas_corrigidas} categorias**.
         """
     )
+    # São cerca de 35 grafias distintas em quase 95 mil linhas: normalizar só
+    # as distintas e mapear de volta dá o mesmo resultado em uma fração do tempo.
+    grafias = operacoes["NOME_ZONEAMENTO"].dropna().unique()
+    chaves = dict(zip(grafias, map(dd.sem_acento, grafias)))
     pares = (
-        operacoes.assign(chave=operacoes["NOME_ZONEAMENTO"].map(dd.sem_acento))
+        operacoes.assign(chave=operacoes["NOME_ZONEAMENTO"].map(chaves))
         .groupby("chave")["NOME_ZONEAMENTO"]
         .agg(grafias="nunique", exemplos=lambda s: " | ".join(sorted(set(s))))
         .reset_index()
